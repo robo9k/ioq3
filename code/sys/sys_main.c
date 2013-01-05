@@ -445,7 +445,12 @@ void Sys_UnloadDll( void *dllHandle )
 	Sys_UnloadLibrary(dllHandle);
 }
 
-static void *_Sys_LoadDll( const char *name )
+ /*
+===================
+Sys_LoadDllAbsolute
+===================
+*/ 
+static void *Sys_LoadDllAbsolute( const char *name )
 {
 	void *dllHandle = NULL;
 
@@ -477,14 +482,14 @@ void *Sys_LoadDll( const char *name, qboolean useSystemLib )
 	int			i;
 
 	if( useSystemLib ) {
-		dllHandle = _Sys_LoadDll(name);
+		dllHandle = Sys_LoadDllAbsolute(name);
 	}
 
 	for( i = 0; !dllHandle && i < ARRAY_LEN(varName); ++i ) {
 		Com_sprintf(dllPath, sizeof(dllPath), "%s%c%s",
 		             Cvar_VariableString(varName[i]), PATH_SEP, name);
 
-		dllHandle = _Sys_LoadDll(dllPath);
+		dllHandle = Sys_LoadDllAbsolute(dllPath);
 	}
 
 	return dllHandle;
