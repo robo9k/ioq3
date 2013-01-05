@@ -49,6 +49,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 static char binaryPath[ MAX_OSPATH ] = { 0 };
 static char installPath[ MAX_OSPATH ] = { 0 };
+static char libPath[ MAX_OSPATH ] = { '\0' };
 
 /*
 =================
@@ -101,6 +102,31 @@ Sys_DefaultAppPath
 char *Sys_DefaultAppPath(void)
 {
 	return Sys_BinaryPath();
+}
+
+/*
+=================
+Sys_SetLibPath
+=================
+*/
+void Sys_SetLibPath(const char *path)
+{
+	Q_strncpyz(libPath, path, sizeof(libPath));
+}
+
+/*
+=================
+Sys_LibPath
+=================
+*/
+char *Sys_LibPath( void )
+{
+	if ( *libPath ) {
+		return libPath;
+	}
+	else {
+		return Sys_Cwd();
+	}
 }
 
 /*
@@ -419,55 +445,49 @@ void Sys_UnloadDll( void *dllHandle )
 	Sys_UnloadLibrary(dllHandle);
 }
 
+static void *_Sys_LoadDll( const char *name )
+{
+	void *dllHandle = NULL;
+
+	Com_Printf("Loading library \"%s\" ...\n", name);
+
+	dllHandle = Sys_LoadLibrary( name );
+	if( !dllHandle ) {
+		Com_Printf("Loading library \"%s\" failed\n", name);
+		Com_DPrintf("Error loading library: \"%s\"\n", Sys_LibraryError());
+	}
+
+	return dllHandle;
+}
+
 /*
 =================
 Sys_LoadDll
 
-First try to load library name from system library path,
-from executable path, then fs_basepath.
+If useSystemLib is set, tries to load library without any specific
+path (i.e. from system path) first.
+Then tries to load library from fs_libpath and fs_basepath.
 =================
 */
-
-void *Sys_LoadDll(const char *name, qboolean useSystemLib)
+void *Sys_LoadDll( const char *name, qboolean useSystemLib )
 {
-	void *dllhandle;
-	
-	if(useSystemLib)
-		Com_Printf("Trying to load \"%s\"...\n", name);
-	
-	if(!useSystemLib || !(dllhandle = Sys_LoadLibrary(name)))
-	{
-		const char *topDir;
-		char libPath[MAX_OSPATH];
+	void		*dllHandle = NULL;
+	char		dllPath[MAX_OSPATH];
+	const char	varName[][16] = { "fs_libpath", "fs_basepath" };
+	int			i;
 
-		topDir = Sys_BinaryPath();
-
-		if(!*topDir)
-			topDir = ".";
-
-		Com_Printf("Trying to load \"%s\" from \"%s\"...\n", name, topDir);
-		Com_sprintf(libPath, sizeof(libPath), "%s%c%s", topDir, PATH_SEP, name);
-
-		if(!(dllhandle = Sys_LoadLibrary(libPath)))
-		{
-			const char *basePath = Cvar_VariableString("fs_basepath");
-			
-			if(!basePath || !*basePath)
-				basePath = ".";
-			
-			if(FS_FilenameCompare(topDir, basePath))
-			{
-				Com_Printf("Trying to load \"%s\" from \"%s\"...\n", name, basePath);
-				Com_sprintf(libPath, sizeof(libPath), "%s%c%s", basePath, PATH_SEP, name);
-				dllhandle = Sys_LoadLibrary(libPath);
-			}
-			
-			if(!dllhandle)
-				Com_Printf("Loading \"%s\" failed\n", name);
-		}
+	if( useSystemLib ) {
+		dllHandle = _Sys_LoadDll(name);
 	}
-	
-	return dllhandle;
+
+	for( i = 0; !dllHandle && i < ARRAY_LEN(varName); ++i ) {
+		Com_sprintf(dllPath, sizeof(dllPath), "%s%c%s",
+		             Cvar_VariableString(varName[i]), PATH_SEP, name);
+
+		dllHandle = _Sys_LoadDll(dllPath);
+	}
+
+	return dllHandle;
 }
 
 /*
@@ -542,6 +562,15 @@ void Sys_ParseArgs( int argc, char **argv )
 #		define DEFAULT_BASEDIR Sys_BinaryPath()
 #	endif
 #endif
+
+#ifndef DEFAULT_LIBDIR
+#	ifdef MACOS_X
+#		define DEFAULT_LIBDIR Sys_StripAppBundle(Sys_BinaryPath())
+#	else
+#		define DEFAULT_LIBDIR Sys_BinaryPath()
+#	endif
+#endif
+
 
 /*
 =================
@@ -619,6 +648,7 @@ int main( int argc, char **argv )
 	Sys_ParseArgs( argc, argv );
 	Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );
 	Sys_SetDefaultInstallPath( DEFAULT_BASEDIR );
+	Sys_SetLibPath( DEFAULT_LIBDIR );
 
 	// Concatenate the command line for passing to Com_Init
 	for( i = 1; i < argc; i++ )

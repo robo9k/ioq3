@@ -3153,6 +3153,12 @@ int CL_ScaledMilliseconds(void) {
 	return Sys_Milliseconds()*com_timescale->value;
 }
 
+#ifdef USE_RENDERER_DLOPEN
+static char *CL_RendererLib(const char *name) {
+	return va( "renderer_%s_" ARCH_STRING DLL_EXT, name );
+}
+#endif /* USE_RENDERER_DLOPEN */
+
 /*
 ============
 CL_InitRef
@@ -3163,7 +3169,6 @@ void CL_InitRef( void ) {
 	refexport_t	*ret;
 #ifdef USE_RENDERER_DLOPEN
 	GetRefAPI_t		GetRefAPI;
-	char			dllName[MAX_OSPATH];
 #endif
 
 	Com_Printf( "----- Initializing Renderer ----\n" );
@@ -3171,21 +3176,18 @@ void CL_InitRef( void ) {
 #ifdef USE_RENDERER_DLOPEN
 	cl_renderer = Cvar_Get("cl_renderer", "opengl1", CVAR_ARCHIVE | CVAR_LATCH);
 
-	Com_sprintf(dllName, sizeof(dllName), "renderer_%s_" ARCH_STRING DLL_EXT, cl_renderer->string);
+	if ( !(rendererLib = Sys_LoadDll( CL_RendererLib( cl_renderer->string ), qfalse ) )
+	     && strcmp( cl_renderer->string, cl_renderer->resetString ) ) {
 
-	if(!(rendererLib = Sys_LoadDll(dllName, qfalse)) && strcmp(cl_renderer->string, cl_renderer->resetString))
-	{
-		Com_Printf("failed:\n\"%s\"\n", Sys_LibraryError());
-		Cvar_ForceReset("cl_renderer");
+		Com_Printf( "Failed to load renderer \"%s\", trying default \"%s\"\n",
+				   cl_renderer->string, cl_renderer->resetString );
+		Cvar_ForceReset( "cl_renderer" );
 
-		Com_sprintf(dllName, sizeof(dllName), "renderer_opengl1_" ARCH_STRING DLL_EXT);
-		rendererLib = Sys_LoadDll(dllName, qfalse);
+		rendererLib = Sys_LoadDll( CL_RendererLib( cl_renderer->string ), qfalse );
 	}
 
-	if(!rendererLib)
-	{
-		Com_Printf("failed:\n\"%s\"\n", Sys_LibraryError());
-		Com_Error(ERR_FATAL, "Failed to load renderer");
+	if ( !rendererLib ) {
+		Com_Error( ERR_FATAL, "Failed to load renderer library" );
 	}
 
 	GetRefAPI = Sys_LoadFunction(rendererLib, "GetRefAPI");
