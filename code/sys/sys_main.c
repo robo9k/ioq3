@@ -445,52 +445,42 @@ void Sys_UnloadDll( void *dllHandle )
 	Sys_UnloadLibrary(dllHandle);
 }
 
- /*
-===================
-Sys_LoadDllAbsolute
-===================
-*/ 
-static void *Sys_LoadDllAbsolute( const char *name )
-{
-	void *dllHandle = NULL;
-
-	Com_Printf("Loading library \"%s\" ...\n", name);
-
-	dllHandle = Sys_LoadLibrary( name );
-	if( !dllHandle ) {
-		Com_Printf("Loading library \"%s\" failed\n", name);
-		Com_DPrintf("Error loading library: \"%s\"\n", Sys_LibraryError());
-	}
-
-	return dllHandle;
-}
-
 /*
 =================
 Sys_LoadDll
 
 If useSystemLib is set, tries to load library without any specific
 path (i.e. from system path) first.
-Then tries to load library from fs_libpath and fs_basepath.
+Then tries to load library from fs_libpath.
 =================
 */
 void *Sys_LoadDll( const char *name, qboolean useSystemLib )
 {
-	void		*dllHandle = NULL;
-	char		dllPath[MAX_OSPATH];
-	const char	varName[][16] = { "fs_libpath", "fs_basepath" };
-	int			i;
+	void *dllHandle = NULL;
 
-	if( useSystemLib ) {
-		dllHandle = Sys_LoadDllAbsolute(name);
+	if(useSystemLib)
+		Com_Printf("Loading system library \"%s\" ...\n", name);
+
+	if(!useSystemLib || !(dllHandle = Sys_LoadLibrary(name)))
+	{
+		char dllPath[MAX_OSPATH] = { '\0' };
+		const char *libPath = Cvar_VariableString("fs_libpath");
+
+		if(!libPath || !*libPath)
+			libPath = ".";
+
+		Com_sprintf(dllPath, sizeof(dllPath), "%s%c%s", libPath, PATH_SEP, name);
+
+		if(useSystemLib)
+			Com_DPrintf("Loading system library \"%s\" failed: \"%s\"\n",
+					    name, Sys_LibraryError());
+		Com_Printf("Loading library \"%s\" from \"%s\" ...\n", name, libPath);
+		dllHandle = Sys_LoadLibrary(dllPath);
 	}
 
-	for( i = 0; !dllHandle && i < ARRAY_LEN(varName); ++i ) {
-		Com_sprintf(dllPath, sizeof(dllPath), "%s%c%s",
-		             Cvar_VariableString(varName[i]), PATH_SEP, name);
-
-		dllHandle = Sys_LoadDllAbsolute(dllPath);
-	}
+	if(!dllHandle)
+		Com_Printf(S_COLOR_YELLOW "WARNING: Loading library \"%s\" failed: \"%s\"\n",
+				   name, Sys_LibraryError());
 
 	return dllHandle;
 }
