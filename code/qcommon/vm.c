@@ -575,9 +575,10 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 				vmInterpret_t interpret ) {
 	vm_t		*vm;
 	vmHeader_t	*header;
-	int			i, remaining, retval;
+	int			i, remaining;
 	char filename[MAX_OSPATH];
 	void *startSearch = NULL;
+	qboolean retval = qfalse;
 
 	if ( !module || !module[0] || !systemCalls ) {
 		Com_Error( ERR_FATAL, "VM_Create: bad parms" );
@@ -608,14 +609,10 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 
 	Q_strncpyz(vm->name, module, sizeof(vm->name));
 
-	do
-	{
-		retval = FS_FindVM(&startSearch, filename, sizeof(filename), module, (interpret == VMI_NATIVE));
-		
-		if(retval == VMI_NATIVE)
+	if(VMI_NATIVE==interpret) {
+		while((retval = FS_FindNativeVM(&startSearch, filename, sizeof(filename), module)))
 		{
-			Com_Printf("Try loading dll file %s\n", filename);
-
+			Com_Printf("Loading dll VM \"%s\" ...\n", filename);
 			vm->dllHandle = Sys_LoadGameDll(filename, &vm->entryPoint, VM_DllSyscall);
 			
 			if(vm->dllHandle)
@@ -624,20 +621,23 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 				return vm;
 			}
 			
-			Com_Printf("Failed loading dll, trying next\n");
+			Com_Printf("Failed loading VM dll, trying next ...\n");
 		}
-		else if(retval == VMI_COMPILED)
-		{
-			vm->searchPath = startSearch;
-			if((header = VM_LoadQVM(vm, qtrue, qfalse)))
-				break;
+		startSearch = NULL;
+		Com_DPrintf("No dll VM found, trying QVM ones ...\n");
+	}
 
-			// VM_Free overwrites the name on failed load
-			Q_strncpyz(vm->name, module, sizeof(vm->name));
-		}
-	} while(retval >= 0);
-	
-	if(retval < 0)
+	while((retval = FS_FindCompiledVM(&startSearch, filename, sizeof(filename), module)))
+	{
+		vm->searchPath = startSearch;
+		if((header = VM_LoadQVM(vm, qtrue, qfalse)))
+			break;
+
+		// VM_Free overwrites the name on failed load
+		Q_strncpyz(vm->name, module, sizeof(vm->name));
+	}
+
+	if(!retval)
 		return NULL;
 
 	vm->systemCall = systemCalls;

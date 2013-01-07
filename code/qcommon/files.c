@@ -257,6 +257,7 @@ static	cvar_t		*fs_basepath;
 static	cvar_t		*fs_basegame;
 static	cvar_t		*fs_gamedirvar;
 static	searchpath_t	*fs_searchpaths;
+static 	searchpath_t	*fs_nativevmpaths;
 static	int			fs_readCount;			// total bytes read
 static	int			fs_loadCount;			// total files read
 static	int			fs_loadStack;			// total files in memory
@@ -1370,35 +1371,71 @@ long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueF
 
 /*
 =================
-FS_FindVM
+FS_FindNativeVM
 
-Find a suitable VM file in search path order.
-
-In each searchpath try:
- - open DLL file if DLL loading enabled
- - open QVM file
-
-Enable search for DLL by setting enableDll to FSVM_ENABLEDLL
-
-write found DLL or QVM to "found" and return VMI_NATIVE if DLL, VMI_COMPILED if QVM
-Return the searchpath in "startSearch".
+Returns true when a native VM DLL with given name was
+found in fs_nativevmpaths and sets found accordingly.
+Returns the search path in startSearch (for further searches).
 =================
 */
-
-vmInterpret_t FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll)
+qboolean FS_FindNativeVM(void **startSearch, char *found, int foundlen, const char *name)
 {
 	searchpath_t *search, *lastSearch;
 	directory_t *dir;
-	pack_t *pack;
-	char dllName[MAX_OSPATH], qvmName[MAX_OSPATH];
+	char dllName[MAX_OSPATH];
 	char *netpath;
+
+	if(!fs_nativevmpaths)
+		Com_Error(ERR_FATAL, "Filesystem call made without initialization");
+
+	Com_sprintf(dllName, sizeof(dllName), "%s" ARCH_STRING DLL_EXT, name);
+
+	lastSearch = *startSearch;
+	if(*startSearch == NULL)
+		search = fs_nativevmpaths;
+	else
+		search = lastSearch->next;
+
+	while(search)
+	{
+		if(search->dir && !fs_numServerPaks)
+		{
+			dir = search->dir;
+			netpath = FS_BuildOSPath(dir->path, dir->gamedir, dllName);
+
+			if(FS_FileInPathExists(netpath))
+			{
+				Q_strncpyz(found, netpath, foundlen);
+				*startSearch = search;
+
+				return qtrue;
+			}
+		}
+
+		search = search->next;
+	}
+
+	return qfalse;
+}
+
+/*
+=================
+FS_FindCompiledVM
+
+Returns true when a compiled VM QVM with given name was
+found in fs_searchpaths and sets found accordingly.
+Returns the search path in startSearch (for further searches).
+=================
+*/
+qboolean FS_FindCompiledVM(void **startSearch, char *found, int foundlen, const char *name)
+{
+	searchpath_t *search, *lastSearch;
+	pack_t *pack;
+	char qvmName[MAX_OSPATH];
 
 	if(!fs_searchpaths)
 		Com_Error(ERR_FATAL, "Filesystem call made without initialization");
 
-	if(enableDll)
-		Com_sprintf(dllName, sizeof(dllName), "%s" ARCH_STRING DLL_EXT, name);
-		
 	Com_sprintf(qvmName, sizeof(qvmName), "vm/%s.qvm", name);
 
 	lastSearch = *startSearch;
@@ -1406,30 +1443,15 @@ vmInterpret_t FS_FindVM(void **startSearch, char *found, int foundlen, const cha
 		search = fs_searchpaths;
 	else
 		search = lastSearch->next;
-        
+
 	while(search)
 	{
 		if(search->dir && !fs_numServerPaks)
 		{
-			dir = search->dir;
-
-			if(enableDll)
-			{
-				netpath = FS_BuildOSPath(dir->path, dir->gamedir, dllName);
-
-				if(FS_FileInPathExists(netpath))
-				{
-					Q_strncpyz(found, netpath, foundlen);
-					*startSearch = search;
-					
-					return VMI_NATIVE;
-				}
-			}
-
 			if(FS_FOpenFileReadDir(qvmName, search, NULL, qfalse, qfalse) > 0)
 			{
 				*startSearch = search;
-				return VMI_COMPILED;
+				return qtrue;
 			}
 		}
 		else if(search->pack)
@@ -1440,7 +1462,6 @@ vmInterpret_t FS_FindVM(void **startSearch, char *found, int foundlen, const cha
 		        {
 		                // make sure we only try loading one VM file per game dir
 		                // i.e. if VM from pak7.pk3 fails we won't try one from pak6.pk3
-		                
 		                if(!FS_FilenameCompare(lastSearch->pack->pakPathname, pack->pakPathname))
                                 {
                                         search = search->next;
@@ -1452,14 +1473,14 @@ vmInterpret_t FS_FindVM(void **startSearch, char *found, int foundlen, const cha
 			{
 				*startSearch = search;
 
-				return VMI_COMPILED;
+				return qtrue;
 			}
 		}
-		
+
 		search = search->next;
 	}
 
-	return -1;
+	return qfalse;
 }
 
 /*
@@ -2816,6 +2837,40 @@ static int QDECL paksort( const void *a, const void *b ) {
 
 /*
 ================
+FS_AddNativeVMDirectory
+
+Adds the directory to the head of the path
+================
+*/
+static void FS_AddNativeVMDirectory( const char *path, const char *dir ) {
+	searchpath_t	*sp;
+	searchpath_t	*search;
+	char			curpath[MAX_OSPATH + 1];
+
+	// Make sure that path+dir are unique
+	for ( sp = fs_nativevmpaths ; sp ; sp = sp->next ) {
+		if ( sp->dir && !Q_stricmp(sp->dir->path, path) && !Q_stricmp(sp->dir->gamedir, dir)) {
+			return;			// we've already got this one
+		}
+	}
+
+	Q_strncpyz(curpath, FS_BuildOSPath(path, dir, ""), sizeof(curpath));
+	curpath[strlen(curpath) - 1] = '\0';	// strip the trailing slash
+
+	// add the directory to the search path
+	search = Z_Malloc (sizeof(searchpath_t));
+	search->dir = Z_Malloc( sizeof( *search->dir ) );
+
+	Q_strncpyz(search->dir->path, path, sizeof(search->dir->path));
+	Q_strncpyz(search->dir->fullpath, curpath, sizeof(search->dir->fullpath));
+	Q_strncpyz(search->dir->gamedir, dir, sizeof(search->dir->gamedir));
+
+	search->next = fs_nativevmpaths;
+	fs_nativevmpaths = search;
+}
+
+/*
+================
 FS_AddGameDirectory
 
 Sets fs_gamedir, adds the directory to the head of the path,
@@ -3076,9 +3131,21 @@ void FS_Shutdown( qboolean closemfp ) {
 
 		Z_Free(p);
 	}
+	for(p = fs_nativevmpaths; p; p = next)
+	{
+		next = p->next;
+
+		if(p->pack)
+			FS_FreePak(p->pack);
+		if (p->dir)
+			Z_Free(p->dir);
+
+		Z_Free(p);
+	}
 
 	// any FS_ calls will now be an error until reinitialized
 	fs_searchpaths = NULL;
+	fs_nativevmpaths = NULL;
 
 	Cmd_RemoveCommand( "path" );
 	Cmd_RemoveCommand( "dir" );
@@ -3198,6 +3265,33 @@ static void FS_Startup( const char *gameName )
 		}
 		if (fs_homepath->string[0] && Q_stricmp(fs_homepath->string,fs_basepath->string)) {
 			FS_AddGameDirectory(fs_homepath->string, fs_gamedirvar->string);
+		}
+	}
+
+    // Setup search path for native library VMs
+	if (fs_libpath->string[0]) {
+		FS_AddNativeVMDirectory( fs_libpath->string, gameName );
+	}
+
+	if (fs_homepath->string[0] && Q_stricmp(fs_homepath->string, fs_libpath->string)) {
+		FS_AddNativeVMDirectory( fs_homepath->string, gameName );
+	}
+
+	if ( fs_basegame->string[0] && Q_stricmp( fs_basegame->string, gameName ) ) {
+		if (fs_libpath->string[0]) {
+			FS_AddNativeVMDirectory(fs_libpath->string, fs_basegame->string);
+		}
+		if (fs_homepath->string[0] && Q_stricmp(fs_homepath->string, fs_libpath->string)) {
+			FS_AddNativeVMDirectory(fs_homepath->string, fs_basegame->string);
+		}
+	}
+
+	if ( fs_gamedirvar->string[0] && Q_stricmp( fs_gamedirvar->string, gameName ) ) {
+		if (fs_libpath->string[0]) {
+			FS_AddNativeVMDirectory(fs_libpath->string, fs_gamedirvar->string);
+		}
+		if (fs_homepath->string[0] && Q_stricmp(fs_homepath->string,fs_libpath->string)) {
+			FS_AddNativeVMDirectory(fs_homepath->string, fs_gamedirvar->string);
 		}
 	}
 
