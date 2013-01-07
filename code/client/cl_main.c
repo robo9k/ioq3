@@ -3179,15 +3179,17 @@ void CL_InitRef( void ) {
 	if ( !(rendererLib = Sys_LoadDll( CL_RendererLib( cl_renderer->string ), qfalse ) )
 	     && strcmp( cl_renderer->string, cl_renderer->resetString ) ) {
 
-		Com_Printf( "Failed to load renderer \"%s\", trying default \"%s\"\n",
-				   cl_renderer->string, cl_renderer->resetString );
+		Com_Printf( S_COLOR_YELLOW "WARNING: Failed to load library for renderer \"%s\", "
+				    "trying default renderer \"%s\"\n",
+				    cl_renderer->string, cl_renderer->resetString );
 		Cvar_ForceReset( "cl_renderer" );
 
 		rendererLib = Sys_LoadDll( CL_RendererLib( cl_renderer->string ), qfalse );
 	}
 
 	if ( !rendererLib ) {
-		Com_Error( ERR_FATAL, "Failed to load renderer library" );
+		Com_Error( ERR_FATAL, "Failed to load library for default renderer \"%s\"",
+				   cl_renderer->string );
 	}
 
 	GetRefAPI = Sys_LoadFunction(rendererLib, "GetRefAPI");
