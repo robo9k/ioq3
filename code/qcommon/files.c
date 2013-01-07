@@ -3775,6 +3775,7 @@ void FS_InitFilesystem( void ) {
 	// has already been initialized
 	Com_StartupVariable("fs_basepath");
 	Com_StartupVariable("fs_homepath");
+	Com_StartupVariable("fs_libpath");
 	Com_StartupVariable("fs_game");
 
 	if(!FS_FilenameCompare(Cvar_VariableString("fs_game"), com_basegame->string))
